@@ -1,7 +1,7 @@
 export interface BriefAction {
   /** Action identifier, e.g. 'approve', 'reject', 'feedback' */
   key: string;
-  /** Display label, e.g. "✅ 确认开始", "💬 修改意见" */
+  /** Display label, e.g. "✅ Confirm Start", "💬 Revisions" */
   label: string;
   /**
    * Action type:
@@ -30,3 +30,6 @@ export const DEFAULT_BRIEF_ACTIONS: Record<string, BriefAction[]> = {
     { key: 'feedback', label: '💬 修改意见', type: 'comment' },
   ],
 };
+
+/** Brief type — must match DEFAULT_BRIEF_ACTIONS keys and DB schema comment */
+export type BriefType = 'decision' | 'error' | 'insight' | 'result';

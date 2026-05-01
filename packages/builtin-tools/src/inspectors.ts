@@ -11,6 +11,10 @@ import {
   AgentManagementManifest,
 } from '@lobechat/builtin-tool-agent-management/client';
 import {
+  ClaudeCodeIdentifier,
+  ClaudeCodeInspectors,
+} from '@lobechat/builtin-tool-claude-code/client';
+import {
   CloudSandboxIdentifier,
   CloudSandboxInspectors,
 } from '@lobechat/builtin-tool-cloud-sandbox/client';
@@ -32,6 +36,7 @@ import {
   LocalSystemManifest,
 } from '@lobechat/builtin-tool-local-system/client';
 import { MemoryInspectors, MemoryManifest } from '@lobechat/builtin-tool-memory/client';
+import { MessageInspectors, MessageManifest } from '@lobechat/builtin-tool-message/client';
 import { NotebookInspectors, NotebookManifest } from '@lobechat/builtin-tool-notebook/client';
 import { PageAgentInspectors, PageAgentManifest } from '@lobechat/builtin-tool-page-agent/client';
 import {
@@ -43,7 +48,10 @@ import {
   WebBrowsingInspectors,
   WebBrowsingManifest,
 } from '@lobechat/builtin-tool-web-browsing/client';
+import { createRunCommandInspector } from '@lobechat/shared-tool-ui/inspectors';
 import { type BuiltinInspector } from '@lobechat/types';
+
+import { CodexInspectors } from './codex';
 
 /**
  * Builtin tools inspector registry
@@ -58,6 +66,7 @@ const BuiltinToolInspectors: Record<string, Record<string, BuiltinInspector>> = 
     string,
     BuiltinInspector
   >,
+  [ClaudeCodeIdentifier]: ClaudeCodeInspectors as Record<string, BuiltinInspector>,
   [CloudSandboxIdentifier]: CloudSandboxInspectors as Record<string, BuiltinInspector>,
   [GroupAgentBuilderManifest.identifier]: GroupAgentBuilderInspectors as Record<
     string,
@@ -71,6 +80,7 @@ const BuiltinToolInspectors: Record<string, Record<string, BuiltinInspector>> = 
   [KnowledgeBaseManifest.identifier]: KnowledgeBaseInspectors as Record<string, BuiltinInspector>,
   [LocalSystemManifest.identifier]: LocalSystemInspectors as Record<string, BuiltinInspector>,
   [MemoryManifest.identifier]: MemoryInspectors as Record<string, BuiltinInspector>,
+  [MessageManifest.identifier]: MessageInspectors as Record<string, BuiltinInspector>,
   [NotebookManifest.identifier]: NotebookInspectors as Record<string, BuiltinInspector>,
   [PageAgentManifest.identifier]: PageAgentInspectors as Record<string, BuiltinInspector>,
   [LobeActivatorManifest.identifier]: LobeActivatorInspectors as Record<string, BuiltinInspector>,
@@ -79,7 +89,28 @@ const BuiltinToolInspectors: Record<string, Record<string, BuiltinInspector>> = 
   [SkillStoreManifest.identifier]: SkillStoreInspectors as Record<string, BuiltinInspector>,
   [SkillsManifest.identifier]: SkillsInspectors as Record<string, BuiltinInspector>,
   [WebBrowsingManifest.identifier]: WebBrowsingInspectors as Record<string, BuiltinInspector>,
+  codex: {
+    ...CodexInspectors,
+    command_execution: createRunCommandInspector('Run') as BuiltinInspector,
+  },
 };
+
+export interface BuiltinInspectorRegistryEntry {
+  apiName: string;
+  identifier: string;
+  inspector: BuiltinInspector;
+}
+
+export const listBuiltinInspectorEntries = (): BuiltinInspectorRegistryEntry[] =>
+  Object.entries(BuiltinToolInspectors).flatMap(([identifier, toolset]) =>
+    Object.entries(toolset)
+      .filter((entry): entry is [string, BuiltinInspector] => !!entry[1])
+      .map(([apiName, inspector]) => ({
+        apiName,
+        identifier,
+        inspector,
+      })),
+  );
 
 /**
  * Get builtin inspector component for a specific API

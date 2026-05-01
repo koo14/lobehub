@@ -3,9 +3,17 @@ import {
   AgentBuilderStreamings,
 } from '@lobechat/builtin-tool-agent-builder/client';
 import {
+  AgentDocumentsManifest,
+  AgentDocumentsStreamings,
+} from '@lobechat/builtin-tool-agent-documents/client';
+import {
   AgentManagementManifest,
   AgentManagementStreamings,
 } from '@lobechat/builtin-tool-agent-management/client';
+import {
+  ClaudeCodeIdentifier,
+  ClaudeCodeStreamings,
+} from '@lobechat/builtin-tool-claude-code/client';
 import {
   CloudSandboxManifest,
   CloudSandboxStreamings,
@@ -24,6 +32,7 @@ import {
   LocalSystemStreamings,
 } from '@lobechat/builtin-tool-local-system/client';
 import { MemoryManifest, MemoryStreamings } from '@lobechat/builtin-tool-memory/client';
+import { MessageManifest, MessageStreamings } from '@lobechat/builtin-tool-message/client';
 import { NotebookManifest, NotebookStreamings } from '@lobechat/builtin-tool-notebook/client';
 import { type BuiltinStreaming } from '@lobechat/types';
 
@@ -37,10 +46,12 @@ import { type BuiltinStreaming } from '@lobechat/types';
  */
 const BuiltinToolStreamings: Record<string, Record<string, BuiltinStreaming>> = {
   [AgentBuilderManifest.identifier]: AgentBuilderStreamings as Record<string, BuiltinStreaming>,
+  [AgentDocumentsManifest.identifier]: AgentDocumentsStreamings as Record<string, BuiltinStreaming>,
   [AgentManagementManifest.identifier]: AgentManagementStreamings as Record<
     string,
     BuiltinStreaming
   >,
+  [ClaudeCodeIdentifier]: ClaudeCodeStreamings as Record<string, BuiltinStreaming>,
   [CloudSandboxManifest.identifier]: CloudSandboxStreamings as Record<string, BuiltinStreaming>,
   [GroupAgentBuilderManifest.identifier]: GroupAgentBuilderStreamings as Record<
     string,
@@ -53,8 +64,26 @@ const BuiltinToolStreamings: Record<string, Record<string, BuiltinStreaming>> = 
   [GTDManifest.identifier]: GTDStreamings as Record<string, BuiltinStreaming>,
   [LocalSystemManifest.identifier]: LocalSystemStreamings as Record<string, BuiltinStreaming>,
   [MemoryManifest.identifier]: MemoryStreamings as Record<string, BuiltinStreaming>,
+  [MessageManifest.identifier]: MessageStreamings as Record<string, BuiltinStreaming>,
   [NotebookManifest.identifier]: NotebookStreamings as Record<string, BuiltinStreaming>,
 };
+
+export interface BuiltinStreamingRegistryEntry {
+  apiName: string;
+  identifier: string;
+  streaming: BuiltinStreaming;
+}
+
+export const listBuiltinStreamingEntries = (): BuiltinStreamingRegistryEntry[] =>
+  Object.entries(BuiltinToolStreamings).flatMap(([identifier, toolset]) =>
+    Object.entries(toolset)
+      .filter((entry): entry is [string, BuiltinStreaming] => !!entry[1])
+      .map(([apiName, streaming]) => ({
+        apiName,
+        identifier,
+        streaming,
+      })),
+  );
 
 /**
  * Get builtin streaming component for a specific API

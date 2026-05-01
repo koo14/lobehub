@@ -2,7 +2,7 @@
 
 import { Flexbox } from '@lobehub/ui';
 import { createStaticStyles } from 'antd-style';
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
 import Loading from '@/components/Loading/BrandTextLoading';
@@ -34,7 +34,14 @@ const ChannelPage = memo(() => {
   const { data: providers, isLoading: providersLoading } = useAgentStore((s) =>
     s.useFetchBotProviders(aid),
   );
-  const { data: runtimeStatuses } = useAgentStore((s) => s.useFetchBotRuntimeStatuses(aid));
+  const triggerRefreshAllBotStatuses = useAgentStore((s) => s.triggerRefreshAllBotStatuses);
+
+  // Fire-and-forget a live gateway status refresh on entry. The list renders
+  // from cached statuses immediately; SWR revalidates once Redis is updated.
+  useEffect(() => {
+    if (!aid) return;
+    triggerRefreshAllBotStatuses(aid);
+  }, [aid, triggerRefreshAllBotStatuses]);
 
   const isLoading = platformsLoading || providersLoading;
 
@@ -46,17 +53,13 @@ const ChannelPage = memo(() => {
       new Map<string, BotRuntimeStatus>(
         (providers ?? [])
           .filter((provider) => provider.enabled)
-          .map((provider) => {
-            const runtimeStatus = runtimeStatuses?.find(
-              (item) =>
-                item.platform === provider.platform &&
-                item.applicationId === provider.applicationId,
-            );
-
-            return [provider.platform, runtimeStatus?.status ?? BOT_RUNTIME_STATUSES.disconnected];
-          }),
+          .map((provider) => [
+            provider.platform,
+            ((provider as any).runtimeStatus as BotRuntimeStatus) ??
+              BOT_RUNTIME_STATUSES.disconnected,
+          ]),
       ),
-    [providers, runtimeStatuses],
+    [providers],
   );
 
   const activePlatformDef = useMemo(
@@ -81,7 +84,9 @@ const ChannelPage = memo(() => {
           <div className={styles.container}>
             <PlatformList
               activeId={effectiveActiveId}
+              agentId={aid}
               platforms={platforms}
+              providers={providers}
               runtimeStatuses={platformRuntimeStatuses}
               onSelect={setActiveProviderId}
             />
@@ -89,6 +94,7 @@ const ChannelPage = memo(() => {
               agentId={aid}
               currentConfig={currentConfig}
               platformDef={activePlatformDef}
+              runtimeStatus={platformRuntimeStatuses.get(activePlatformDef.id)}
             />
           </div>
         )}

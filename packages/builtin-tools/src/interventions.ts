@@ -14,8 +14,17 @@ import {
   LocalSystemInterventions,
 } from '@lobechat/builtin-tool-local-system/client';
 import { MemoryInterventions, MemoryManifest } from '@lobechat/builtin-tool-memory/client';
+import { MessageInterventions, MessageManifest } from '@lobechat/builtin-tool-message/client';
 import { NotebookManifest } from '@lobechat/builtin-tool-notebook';
 import { NotebookInterventions } from '@lobechat/builtin-tool-notebook/client';
+import {
+  UserInteractionIdentifier,
+  UserInteractionInterventions,
+} from '@lobechat/builtin-tool-user-interaction/client';
+import {
+  WebOnboardingInterventions,
+  WebOnboardingManifest,
+} from '@lobechat/builtin-tool-web-onboarding/client';
 import { type BuiltinIntervention } from '@lobechat/types';
 
 /**
@@ -30,8 +39,28 @@ export const BuiltinToolInterventions: Record<string, Record<string, any>> = {
   [GTDManifest.identifier]: GTDInterventions,
   [LocalSystemIdentifier]: LocalSystemInterventions,
   [MemoryManifest.identifier]: MemoryInterventions,
+  [MessageManifest.identifier]: MessageInterventions,
   [NotebookManifest.identifier]: NotebookInterventions,
+  [UserInteractionIdentifier]: UserInteractionInterventions,
+  [WebOnboardingManifest.identifier]: WebOnboardingInterventions,
 };
+
+export interface BuiltinInterventionRegistryEntry {
+  apiName: string;
+  identifier: string;
+  intervention: BuiltinIntervention;
+}
+
+export const listBuiltinInterventionEntries = (): BuiltinInterventionRegistryEntry[] =>
+  Object.entries(BuiltinToolInterventions).flatMap(([identifier, toolset]) =>
+    Object.entries(toolset)
+      .filter((entry): entry is [string, BuiltinIntervention] => !!entry[1])
+      .map(([apiName, intervention]) => ({
+        apiName,
+        identifier,
+        intervention,
+      })),
+  );
 
 /**
  * Get builtin intervention component for a specific API

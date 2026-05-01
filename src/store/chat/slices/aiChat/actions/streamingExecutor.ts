@@ -11,6 +11,7 @@ import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { manualModeExcludeToolIds } from '@lobechat/builtin-tools';
 import { isDesktop } from '@lobechat/const';
 import { type ToolsEngine } from '@lobechat/context-engine';
+import { buildTaskDetailPrompt, buildTaskListPrompt } from '@lobechat/prompts';
 import {
   type ConversationContext,
   type RuntimeInitialContext,
@@ -21,13 +22,16 @@ import { t } from 'i18next';
 
 import { createAgentToolsEngine } from '@/helpers/toolEngineering';
 import { type ResolvedAgentConfig } from '@/services/chat/mecha';
-import { resolveAgentConfig } from '@/services/chat/mecha';
+import { composeEnabledTools, resolveAgentConfig } from '@/services/chat/mecha';
 import { localFileService } from '@/services/electron/localFileService';
 import { messageService } from '@/services/message';
 import { getAgentStoreState } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
 import { createAgentExecutors } from '@/store/chat/agents/createAgentExecutors';
-import { type ChatStore } from '@/store/chat/store';
+import { emitClientAgentSignalSourceEvent } from '@/store/chat/slices/aiChat/actions/agentSignalBridge';
+import { type ChatStore, useChatStore } from '@/store/chat/store';
+import { notifyDesktopHumanApprovalRequired } from '@/store/chat/utils/desktopNotification';
+import { getTaskStoreState } from '@/store/task';
 import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
 import { type StoreSetter } from '@/store/types';
 import { toolInterventionSelectors } from '@/store/user/selectors';
@@ -42,6 +46,7 @@ import {
   selectActivatedToolIdsFromMessages,
   selectTodosFromMessages,
 } from '../../message/selectors/dbMessage';
+import { mergeQueuedMessages } from '../../operation/types';
 
 const log = debug('lobe-store:streaming-executor');
 
@@ -184,30 +189,39 @@ export class StreamingExecutorActionImpl {
       { model: agentConfigData.model, provider: agentConfigData.provider! },
       effectivePluginIds,
     );
-    // When skillActivateMode is 'manual', exclude only discovery tools (lobe-activator, lobe-skill-store)
-    // so that externally enabled tools (sandbox, web browsing, etc.) remain available
+    // When skillActivateMode is 'manual':
+    // Exclude only discovery tools (activator, skill-store) so runtime-managed defaults
+    // (skills, web-browsing, sandbox, memory, etc.) remain available for all agents.
     const isManualMode = agentConfig.chatConfig?.skillActivateMode === 'manual';
 
     const toolsDetailed = toolsEngine.generateToolsDetailed({
       excludeDefaultToolIds: isManualMode ? manualModeExcludeToolIds : undefined,
       model: agentConfigData.model,
       provider: agentConfigData.provider!,
-      skipDefaultTools: disableTools,
+      skipDefaultTools: disableTools || undefined,
       toolIds: mergedToolIds,
     });
 
-    const enabledToolIds = toolsDetailed.enabledToolIds;
+    const { enabledToolIds, enabledManifests, tools } = composeEnabledTools({
+      context: {
+        isPageEditorReady: pageAgentRuntime.isReady(),
+        scope,
+      },
+      injectedManifests: initialContext?.initialContext?.injectedManifests,
+      toolsDetailed,
+    });
+
     // Use enabledManifests directly to avoid getEnabledPluginManifests adding default tools again
     const toolManifestMap = Object.fromEntries(
-      toolsDetailed.enabledManifests.map((manifest) => [manifest.identifier, manifest]),
+      enabledManifests.map((manifest) => [manifest.identifier, manifest]),
     );
 
     // Merge tools generation result into agentConfig for chatService to use
     const agentConfigWithTools = {
       ...agentConfig,
-      enabledManifests: toolsDetailed.enabledManifests,
+      enabledManifests,
       enabledToolIds,
-      tools: toolsDetailed.tools,
+      tools,
     };
 
     log(
@@ -264,7 +278,7 @@ export class StreamingExecutorActionImpl {
     // Build initialContext for page editor if lobe-page-agent is enabled
     let runtimeInitialContext: RuntimeInitialContext | undefined;
 
-    if (enabledToolIds.includes(PageAgentIdentifier)) {
+    if (scope === 'page' && enabledToolIds.includes(PageAgentIdentifier)) {
       try {
         // Get page content context from page agent runtime
         const pageContentContext = pageAgentRuntime.getPageContentContext('both');
@@ -288,6 +302,37 @@ export class StreamingExecutorActionImpl {
         // Page agent runtime may not be initialized (e.g., editor not set)
         // This is expected in some scenarios, so we just log and continue
         log('[internal_createAgentState] Failed to get page content context: %o', error);
+      }
+    }
+
+    const viewedTask = operation?.context.viewedTask;
+    if (viewedTask) {
+      try {
+        const taskState = getTaskStoreState();
+        let contextPrompt: string | undefined;
+
+        if (viewedTask.type === 'list') {
+          contextPrompt = buildTaskListPrompt({
+            tasks: taskState.tasks,
+            total: taskState.tasksTotal || taskState.tasks.length,
+          });
+        } else {
+          const detail = taskState.taskDetailMap[viewedTask.taskId];
+          if (detail) contextPrompt = buildTaskDetailPrompt({ task: detail });
+        }
+
+        if (contextPrompt) {
+          runtimeInitialContext = {
+            ...runtimeInitialContext,
+            taskManager: { contextPrompt },
+          };
+          log(
+            '[internal_createAgentState] injected taskManager context (route=%s)',
+            viewedTask.type,
+          );
+        }
+      } catch (error) {
+        log('[internal_createAgentState] Failed to build task manager context: %o', error);
       }
     }
 
@@ -404,6 +449,18 @@ export class StreamingExecutorActionImpl {
       originalMessages.length,
       disableTools,
     );
+    void emitClientAgentSignalSourceEvent({
+      payload: {
+        agentId,
+        operationId,
+        parentMessageId,
+        parentMessageType,
+        threadId: threadId ?? undefined,
+        topicId: topicId ?? undefined,
+      },
+      sourceId: `${operationId}:client:start`,
+      sourceType: 'client.runtime.start',
+    });
 
     // Create a new array to avoid modifying the original messages
     const messages = [...originalMessages];
@@ -486,6 +543,9 @@ export class StreamingExecutorActionImpl {
       nextContext.phase,
     );
 
+    // Compute contextKey for message queue (per-context, not per-operation)
+    const contextKey = messageKey;
+
     // Execute the agent runtime loop
     let stepCount = 0;
     while (state.status !== 'done' && state.status !== 'error') {
@@ -513,13 +573,21 @@ export class StreamingExecutorActionImpl {
       // Use selectTodosFromMessages selector (shared with UI display)
       const todos = selectTodosFromMessages(currentDBMessages);
       // Accumulate activated tool IDs from lobe-activator messages
-      const activatedToolIds = selectActivatedToolIdsFromMessages(currentDBMessages);
+      const activatedToolIds = selectActivatedToolIdsFromMessages(currentDBMessages)?.filter(
+        (id) => scope === 'page' || id !== PageAgentIdentifier,
+      );
       // Accumulate activated skills from activateSkill messages
       const activatedSkills = selectActivatedSkillsFromMessages(currentDBMessages);
-      const stepContext = computeStepContext({ activatedSkills, activatedToolIds, todos });
+      const hasQueuedMessages = (this.#get().queuedMessages[contextKey]?.length ?? 0) > 0;
+      const stepContext = computeStepContext({
+        activatedSkills,
+        activatedToolIds,
+        hasQueuedMessages,
+        todos,
+      });
 
       // If page agent is enabled, get the latest XML for stepPageEditor
-      if (nextContext.initialContext?.pageEditor) {
+      if (scope === 'page' && nextContext.initialContext?.pageEditor) {
         try {
           const pageContentContext = pageAgentRuntime.getPageContentContext('xml');
           stepContext.stepPageEditor = {
@@ -573,6 +641,15 @@ export class StreamingExecutorActionImpl {
         switch (event.type) {
           case 'done': {
             log('[internal_execAgentRuntime] Received done event');
+            break;
+          }
+
+          case 'human_approve_required': {
+            await notifyDesktopHumanApprovalRequired(this.#get, {
+              agentId,
+              groupId,
+              topicId,
+            });
             break;
           }
 
@@ -658,6 +735,51 @@ export class StreamingExecutorActionImpl {
       log('[internal_execAgentRuntime] afterCompletion callbacks executed');
     }
 
+    // If completed successfully and queue has messages, drain and trigger new sendMessage.
+    // Only drain on success — on error the queue is left intact so messages aren't lost.
+    if (state.status === 'done') {
+      const remainingQueued = this.#get().drainQueuedMessages(contextKey);
+      if (remainingQueued.length > 0) {
+        const merged = mergeQueuedMessages(remainingQueued);
+        log(
+          '[internal_execAgentRuntime] %d queued messages after completion, triggering new sendMessage',
+          remainingQueued.length,
+        );
+
+        this.#get().completeOperation(operationId);
+
+        const completedOp = this.#get().operations[operationId];
+        if (completedOp?.context.agentId) {
+          this.#get().markUnreadCompleted(completedOp.context.agentId, completedOp.context.topicId);
+        }
+
+        const execContext = { ...context };
+        const mergedContent = merged.content;
+        // Convert file id strings — sendMessage only reads f.id from each item
+        const mergedFiles =
+          merged.files.length > 0 ? merged.files.map((id) => ({ id }) as any) : undefined;
+
+        setTimeout(() => {
+          useChatStore
+            .getState()
+            .sendMessage({
+              context: execContext,
+              editorData: merged.editorData,
+              files: mergedFiles,
+              message: mergedContent,
+            })
+            .catch((e: unknown) => {
+              console.error(
+                '[internal_execAgentRuntime] sendMessage for queued content failed:',
+                e,
+              );
+            });
+        }, 100);
+
+        return; // Skip the normal completion below
+      }
+    }
+
     // Complete operation based on final state
     switch (state.status) {
       case 'done': {
@@ -689,6 +811,17 @@ export class StreamingExecutorActionImpl {
     }
 
     log('[internal_execAgentRuntime] completed');
+    void emitClientAgentSignalSourceEvent({
+      payload: {
+        agentId,
+        operationId,
+        status: state.status,
+        threadId: threadId ?? undefined,
+        topicId: topicId ?? undefined,
+      },
+      sourceId: `${operationId}:client:complete`,
+      sourceType: 'client.runtime.complete',
+    });
 
     // Desktop notification (if not in tools calling mode)
     if (isDesktop) {

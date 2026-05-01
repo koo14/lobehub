@@ -7,7 +7,7 @@ import { authedProcedure, router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
 import { getBotMessageRouter } from '@/server/services/bot/BotMessageRouter';
-import { platformRegistry } from '@/server/services/bot/platforms';
+import { mergeWithDefaults, platformRegistry } from '@/server/services/bot/platforms';
 import { GatewayService } from '@/server/services/gateway';
 import { getBotRuntimeStatus } from '@/server/services/gateway/runtimeStatus';
 
@@ -21,6 +21,24 @@ const agentBotProviderProcedure = authedProcedure.use(serverDatabase).use(async 
     },
   });
 });
+
+/**
+ * Merge schema defaults into incoming settings before persisting, so the DB
+ * row always carries every declared field. Without this, fields the user
+ * never explicitly touched would stay `undefined` in the DB while the UI
+ * still renders the schema default — a mismatch that has caused silent
+ * connection-mode regressions in the past.
+ */
+function mergeSettingsForPersist(
+  platform: string | undefined,
+  settings: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (settings === undefined) return undefined;
+  if (!platform) return settings;
+  const definition = platformRegistry.getPlatform(platform);
+  if (!definition) return settings;
+  return mergeWithDefaults(definition.schema, settings);
+}
 
 export const agentBotProviderRouter = router({
   listPlatforms: authedProcedure.query(() => {
@@ -40,7 +58,11 @@ export const agentBotProviderRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        return await ctx.agentBotProviderModel.create(input);
+        const payload = {
+          ...input,
+          settings: mergeSettingsForPersist(input.platform, input.settings),
+        };
+        return await ctx.agentBotProviderModel.create(payload);
       } catch (e: any) {
         if (e?.cause?.code === '23505') {
           throw new TRPCError({
@@ -63,7 +85,7 @@ export const agentBotProviderRouter = router({
       // Stop running client and invalidate cached bot
       if (existing) {
         const service = new GatewayService();
-        await service.stopClient(existing.platform, existing.applicationId);
+        await service.stopClient(existing.platform, existing.applicationId, ctx.userId);
         await getBotMessageRouter().invalidateBot(existing.platform, existing.applicationId);
       }
 
@@ -73,13 +95,37 @@ export const agentBotProviderRouter = router({
   getByAgentId: agentBotProviderProcedure
     .input(z.object({ agentId: z.string() }))
     .query(async ({ input, ctx }) => {
-      return ctx.agentBotProviderModel.findByAgentId(input.agentId);
+      const providers = await ctx.agentBotProviderModel.findByAgentId(input.agentId);
+
+      const statuses = await Promise.all(
+        providers.map((p) => getBotRuntimeStatus(p.platform, p.applicationId)),
+      );
+
+      return providers.map((p, i) => ({
+        ...p,
+        runtimeStatus: statuses[i].status,
+      }));
     }),
 
   getRuntimeStatus: authedProcedure
     .input(z.object({ applicationId: z.string(), platform: z.string() }))
     .query(async ({ input }) => {
       return getBotRuntimeStatus(input.platform, input.applicationId);
+    }),
+
+  refreshRuntimeStatus: authedProcedure
+    .input(z.object({ applicationId: z.string(), platform: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      const service = new GatewayService();
+      return service.refreshBotRuntimeStatus(input.platform, input.applicationId, ctx.userId);
+    }),
+
+  refreshRuntimeStatusesByAgent: authedProcedure
+    .input(z.object({ agentId: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      const service = new GatewayService();
+      await service.refreshBotRuntimeStatusesByAgent(input.agentId, ctx.userId);
+      return { ok: true as const };
     }),
 
   list: agentBotProviderProcedure
@@ -92,16 +138,16 @@ export const agentBotProviderRouter = router({
         .optional(),
     )
     .query(async ({ input, ctx }) => {
-      return ctx.agentBotProviderModel.query(input);
-    }),
+      const providers = await ctx.agentBotProviderModel.query(input);
 
-  listRuntimeStatuses: agentBotProviderProcedure
-    .input(z.object({ agentId: z.string() }))
-    .query(async ({ input, ctx }) => {
-      const providers = await ctx.agentBotProviderModel.findByAgentId(input.agentId);
-      return Promise.all(
-        providers.map((provider) => getBotRuntimeStatus(provider.platform, provider.applicationId)),
+      const statuses = await Promise.all(
+        providers.map((p) => getBotRuntimeStatus(p.platform, p.applicationId)),
       );
+
+      return providers.map((p, i) => ({
+        ...p,
+        runtimeStatus: statuses[i].status,
+      }));
     }),
 
   connectBot: agentBotProviderProcedure
@@ -136,10 +182,15 @@ export const agentBotProviderRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: `Unsupported platform: ${platform}` });
       }
 
+      const settings = mergeWithDefaults(
+        entry.schema,
+        provider.settings as Record<string, unknown> | undefined,
+      );
       const result = await entry.clientFactory.validateCredentials(
         provider.credentials,
-        (provider.settings as Record<string, unknown>) || {},
+        settings,
         applicationId,
+        platform,
       );
 
       if (!result.valid) {
@@ -180,6 +231,13 @@ export const agentBotProviderRouter = router({
       // Load existing record to get platform + applicationId for cache invalidation
       const existing = await ctx.agentBotProviderModel.findById(id);
 
+      if (value.settings !== undefined) {
+        value.settings = mergeSettingsForPersist(
+          value.platform ?? existing?.platform,
+          value.settings,
+        );
+      }
+
       const result = await ctx.agentBotProviderModel.update(id, value);
 
       // Invalidate cached bot so it reloads with fresh config on next webhook
@@ -191,7 +249,7 @@ export const agentBotProviderRouter = router({
 
         if (shouldStopRuntime) {
           const service = new GatewayService();
-          await service.stopClient(existing.platform, existing.applicationId);
+          await service.stopClient(existing.platform, existing.applicationId, ctx.userId);
         }
 
         await getBotMessageRouter().invalidateBot(existing.platform, existing.applicationId);

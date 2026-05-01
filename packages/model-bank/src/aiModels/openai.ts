@@ -6,6 +6,7 @@ import {
   type AIRealtimeModelCard,
   type AISTTModelCard,
   type AITTSModelCard,
+  type AIVideoModelCard,
 } from '../types/aiModel';
 
 export const gptImage1ParamsSchema: ModelParamsSchema = {
@@ -18,6 +19,68 @@ export const gptImage1ParamsSchema: ModelParamsSchema = {
 };
 
 export const openaiChatModels: AIChatModelCard[] = [
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_050_000,
+    description:
+      'GPT-5.5 is the frontier model for the most complex professional work, coding, and agentic tasks.',
+    displayName: 'GPT-5.5',
+    enabled: true,
+    id: 'gpt-5.5',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 5,
+              '[0.272, infinity]': 10,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 0.5,
+              '[0.272, infinity]': 1,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput_cacheRead',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 30,
+              '[0.272, infinity]': 45,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textOutput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-04-23',
+    settings: {
+      extendParams: ['gpt5_2ReasoningEffort', 'textVerbosity'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
   {
     abilities: {
       functionCall: true,
@@ -196,7 +259,6 @@ export const openaiChatModels: AIChatModelCard[] = [
     description:
       'GPT-5.3 Chat is the latest ChatGPT model used in ChatGPT with improved conversation experiences.',
     displayName: 'GPT-5.3 Chat',
-    enabled: true,
     id: 'gpt-5.3-chat-latest',
     maxOutput: 16_384,
     pricing: {
@@ -561,7 +623,6 @@ export const openaiChatModels: AIChatModelCard[] = [
     description:
       'A faster, more cost-efficient GPT-5 variant for well-defined tasks, delivering quicker responses while maintaining quality.',
     displayName: 'GPT-5 mini',
-    enabled: true,
     id: 'gpt-5-mini',
     maxOutput: 128_000,
     pricing: {
@@ -1688,6 +1749,55 @@ export const openaiRealtimeModels: AIRealtimeModelCard[] = [
   },
 ];
 
+export const openaiVideoModels: AIVideoModelCard[] = [
+  {
+    description:
+      'Sora 2 is our new powerful media generation model, generating videos with synced audio. It can create richly detailed, dynamic clips from natural language or images.',
+    displayName: 'Sora 2',
+    enabled: true,
+    id: 'sora-2',
+    parameters: {
+      duration: { default: 4, enum: [4, 8, 12] },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      size: {
+        default: '720x1280',
+        enum: ['720x1280', '1280x720', '1024x1792', '1792x1024'],
+      },
+    },
+    pricing: {
+      units: [{ name: 'videoGeneration', rate: 0.1, strategy: 'fixed', unit: 'second' }],
+    },
+    releasedAt: '2025-12-08',
+    type: 'video',
+  },
+  {
+    description:
+      'Sora 2 Pro is our state-of-the-art, most advanced media generation model, generating videos with synced audio. It can create richly detailed, dynamic clips from natural language or images.',
+    displayName: 'Sora 2 Pro',
+    enabled: true,
+    id: 'sora-2-pro',
+    parameters: {
+      duration: { default: 4, enum: [4, 8, 12] },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      size: {
+        default: '720x1280',
+        enum: ['720x1280', '1280x720', '1024x1792', '1792x1024'],
+      },
+    },
+    pricing: {
+      units: [{ name: 'videoGeneration', rate: 0.5, strategy: 'fixed', unit: 'second' }],
+    },
+    releasedAt: '2025-10-06',
+    type: 'video',
+  },
+];
+
 export const allModels = [
   ...openaiChatModels,
   ...openaiEmbeddingModels,
@@ -1695,6 +1805,7 @@ export const allModels = [
   ...openaiSTTModels,
   ...openaiImageModels,
   ...openaiRealtimeModels,
+  ...openaiVideoModels,
 ];
 
 export default allModels;

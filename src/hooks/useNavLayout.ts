@@ -35,7 +35,7 @@ export interface NavLayout {
 export const useNavLayout = (): NavLayout => {
   const { t } = useTranslation('common');
   const toggleCommandMenu = useGlobalStore((s) => s.toggleCommandMenu);
-  const { showMarket, hideGitHub } = useServerConfigStore(featureFlagsSelectors);
+  const { showMarket, hideGitHub, enableAgentTask } = useServerConfigStore(featureFlagsSelectors);
 
   const topNavItems = useMemo(
     () =>
@@ -53,33 +53,46 @@ export const useNavLayout = (): NavLayout => {
           url: '/',
         },
         {
+          hidden: !enableAgentTask,
+          icon: getRouteById('tasks')!.icon,
+          key: SidebarTabKey.Tasks,
+          title: t('tab.tasks'),
+          url: '/tasks',
+        },
+        {
           icon: getRouteById('page')!.icon,
           key: SidebarTabKey.Pages,
           title: t('tab.pages'),
           url: '/page',
         },
-        {
-          hidden: !showMarket,
-          icon: getRouteById('community')!.icon,
-          key: SidebarTabKey.Community,
-          title: t('tab.marketplace'),
-          url: '/community',
-        },
       ] as NavItem[],
-    [t, toggleCommandMenu, showMarket],
+    [t, toggleCommandMenu, enableAgentTask],
   );
 
   const bottomMenuItems = useMemo(
     () =>
       [
         {
+          hidden: !showMarket,
+          icon: getRouteById('community')!.icon,
+          key: SidebarTabKey.Community,
+          title: t('tab.community'),
+          url: '/community',
+        },
+        {
           icon: getRouteById('resource')!.icon,
           key: SidebarTabKey.Resource,
           title: t('tab.resource'),
           url: '/resource',
         },
+        {
+          icon: getRouteById('memory')!.icon,
+          key: SidebarTabKey.Memory,
+          title: t('tab.memory'),
+          url: '/memory',
+        },
       ] as NavItem[],
-    [t],
+    [t, showMarket],
   );
 
   const footer = useMemo(
